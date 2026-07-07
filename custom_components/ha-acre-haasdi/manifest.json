@@ -1,0 +1,12 @@
+{
+  "domain": "ha-acre-haasdi",
+  "name": "Home Assistant ACRE Alarm System Direct Integration",
+  "codeowners": [
+    "@ukuederli"
+  ],
+  "config_flow": true,
+  "documentation": "https://github.com/ukuederli/ha-acre-haasdi",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/ukuederli/ha-acre-haasdi/issues",
+  "version": "0.1.0"
+}
