@@ -72,7 +72,7 @@ class AcreApiClient:
                 f"Error connecting to Acre panel: {exception}"
             ) from exception
 
-    async def async_get_zones(self) -> list[dict[str, Any]]:
+    async def async_get_zones(self, retry: bool = True) -> list[dict[str, Any]]:
         """Get zone status from the Acre panel."""
         if not self._session_id:
             await self.async_login()
@@ -88,10 +88,10 @@ class AcreApiClient:
                         f"Failed to get zones: status {response.status}"
                     )
                 body = await response.text()
-                if "login.htm" in body or "action=login" in body:
+                if ("login.htm" in body or "action=login" in body) and retry:
                     self._session_id = None
                     await self.async_login()
-                    return await self.async_get_zones()
+                    return await self.async_get_zones(retry=False)
                 return self._parse_zones(body)
         except aiohttp.ClientError as exception:
             raise AcreApiClientCommunicationError(
@@ -114,14 +114,16 @@ class AcreApiClient:
                     continue
                 if not zone_name[0].isdigit():
                     continue
-                zones.append({
-                    "id": zone_name.split(" ")[0],
-                    "name": zone_name,
-                    "area": area,
-                    "zone_type": zone_type,
-                    "status": status,
-                    "is_triggered": status.lower() == "actuated",
-                })
+                zones.append(
+                    {
+                        "id": zone_name.split(" ")[0],
+                        "name": zone_name,
+                        "area": area,
+                        "zone_type": zone_type,
+                        "status": status,
+                        "is_triggered": status.lower() == "actuated",
+                    }
+                )
         return zones
 
     async def async_get_data(self) -> dict[str, Any]:
