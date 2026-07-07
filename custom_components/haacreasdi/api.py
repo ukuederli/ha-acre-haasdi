@@ -1,101 +1,130 @@
-"""Sample API Client."""
+"""Acre SPC42 API Client."""
 
 from __future__ import annotations
 
-import socket
+import re
 from typing import Any
 
 import aiohttp
-import async_timeout
+from bs4 import BeautifulSoup
 
 
-class IntegrationBlueprintApiClientError(Exception):
+class AcreApiClientError(Exception):
     """Exception to indicate a general API error."""
 
 
-class IntegrationBlueprintApiClientCommunicationError(
-    IntegrationBlueprintApiClientError,
-):
+class AcreApiClientCommunicationError(AcreApiClientError):
     """Exception to indicate a communication error."""
 
 
-class IntegrationBlueprintApiClientAuthenticationError(
-    IntegrationBlueprintApiClientError,
-):
+class AcreApiClientAuthenticationError(AcreApiClientError):
     """Exception to indicate an authentication error."""
 
 
-def _verify_response_or_raise(response: aiohttp.ClientResponse) -> None:
-    """Verify that the response is valid."""
-    if response.status in (401, 403):
-        msg = "Invalid credentials"
-        raise IntegrationBlueprintApiClientAuthenticationError(
-            msg,
-        )
-    response.raise_for_status()
-
-
-class IntegrationBlueprintApiClient:
-    """Sample API Client."""
+class AcreApiClient:
+    """Acre SPC42 API Client using web scraping."""
 
     def __init__(
         self,
+        host: str,
         username: str,
         password: str,
         session: aiohttp.ClientSession,
     ) -> None:
-        """Sample API Client."""
+        """Initialize the Acre API Client."""
+        self._host = host.rstrip("/")
         self._username = username
         self._password = password
         self._session = session
+        self._session_id: str | None = None
 
-    async def async_get_data(self) -> Any:
-        """Get data from the API."""
-        return await self._api_wrapper(
-            method="get",
-            url="https://jsonplaceholder.typicode.com/posts/1",
-        )
-
-    async def async_set_title(self, value: str) -> Any:
-        """Get data from the API."""
-        return await self._api_wrapper(
-            method="patch",
-            url="https://jsonplaceholder.typicode.com/posts/1",
-            data={"title": value},
-            headers={"Content-type": "application/json; charset=UTF-8"},
-        )
-
-    async def _api_wrapper(
-        self,
-        method: str,
-        url: str,
-        data: dict | None = None,
-        headers: dict | None = None,
-    ) -> Any:
-        """Get information from the API."""
+    async def async_login(self) -> None:
+        """Login to the Acre panel and store session ID."""
+        url = f"http://{self._host}/login.htm"
+        params = {"action": "login", "language": "253"}
+        data = {
+            "userid": self._username,
+            "password": self._password,
+        }
         try:
-            async with async_timeout.timeout(10):
-                response = await self._session.request(
-                    method=method,
-                    url=url,
-                    headers=headers,
-                    json=data,
-                )
-                _verify_response_or_raise(response)
-                return await response.json()
+            async with self._session.post(
+                url,
+                params=params,
+                data=data,
+                allow_redirects=True,
+            ) as response:
+                if response.status != 200:
+                    raise AcreApiClientAuthenticationError(
+                        f"Login failed with status {response.status}"
+                    )
+                final_url = str(response.url)
+                match = re.search(r"session=(0x[0-9A-Fa-f]+)", final_url)
+                if not match:
+                    body = await response.text()
+                    match = re.search(r"session=(0x[0-9A-Fa-f]+)", body)
+                if not match:
+                    raise AcreApiClientAuthenticationError(
+                        "Could not extract session ID - check credentials"
+                    )
+                self._session_id = match.group(1)
+        except aiohttp.ClientError as exception:
+            raise AcreApiClientCommunicationError(
+                f"Error connecting to Acre panel: {exception}"
+            ) from exception
 
-        except TimeoutError as exception:
-            msg = f"Timeout error fetching information - {exception}"
-            raise IntegrationBlueprintApiClientCommunicationError(
-                msg,
+    async def async_get_zones(self) -> list[dict[str, Any]]:
+        """Get zone status from the Acre panel."""
+        if not self._session_id:
+            await self.async_login()
+        url = f"http://{self._host}/secure.htm"
+        params = {
+            "session": self._session_id,
+            "page": "status_zones",
+        }
+        try:
+            async with self._session.get(url, params=params) as response:
+                if response.status != 200:
+                    raise AcreApiClientCommunicationError(
+                        f"Failed to get zones: status {response.status}"
+                    )
+                body = await response.text()
+                if "login.htm" in body or "action=login" in body:
+                    self._session_id = None
+                    await self.async_login()
+                    return await self.async_get_zones()
+                return self._parse_zones(body)
+        except aiohttp.ClientError as exception:
+            raise AcreApiClientCommunicationError(
+                f"Error fetching zones: {exception}"
             ) from exception
-        except (aiohttp.ClientError, socket.gaierror) as exception:
-            msg = f"Error fetching information - {exception}"
-            raise IntegrationBlueprintApiClientCommunicationError(
-                msg,
-            ) from exception
-        except Exception as exception:  # pylint: disable=broad-except
-            msg = f"Something really wrong happened! - {exception}"
-            raise IntegrationBlueprintApiClientError(
-                msg,
-            ) from exception
+
+    def _parse_zones(self, html: str) -> list[dict[str, Any]]:
+        """Parse zone table from HTML response."""
+        soup = BeautifulSoup(html, "html.parser")
+        zones = []
+        rows = soup.find_all("tr")
+        for row in rows:
+            cells = row.find_all("td")
+            if len(cells) >= 4:
+                zone_name = cells[0].get_text(strip=True)
+                area = cells[1].get_text(strip=True)
+                zone_type = cells[2].get_text(strip=True)
+                status = cells[3].get_text(strip=True)
+                if not zone_name or zone_name in ("Zone", ""):
+                    continue
+                if not zone_name[0].isdigit():
+                    continue
+                zones.append({
+                    "id": zone_name.split(" ")[0],
+                    "name": zone_name,
+                    "area": area,
+                    "zone_type": zone_type,
+                    "status": status,
+                    "is_triggered": status.lower() == "actuated",
+                })
+        return zones
+
+    async def async_get_data(self) -> dict[str, Any]:
+        """Get all data from the Acre panel."""
+        zones = await self.async_get_zones()
+        return {"zones": zones}
