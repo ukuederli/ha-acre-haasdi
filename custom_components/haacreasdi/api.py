@@ -74,8 +74,6 @@ class AcreApiClient:
 
     async def async_get_zones(self, retry: bool = True) -> list[dict[str, Any]]:
         """Get zone status from the Acre panel."""
-        if not self._session_id:
-            await self.async_login()
         url = f"http://{self._host}/secure.htm"
         params = {
             "session": self._session_id,
@@ -128,8 +126,6 @@ class AcreApiClient:
 
     async def async_get_alarm_status(self, retry: bool = True) -> dict[str, Any]:
         """Get alarm arm/disarm status from the Acre panel."""
-        if not self._session_id:
-            await self.async_login()
         url = f"http://{self._host}/secure.htm"
         params = {
             "session": self._session_id,
@@ -189,6 +185,8 @@ class AcreApiClient:
 
     async def async_get_data(self) -> dict[str, Any]:
         """Get all data from the Acre panel."""
+        if not self._session_id:
+            await self.async_login()
         zones = await self.async_get_zones()
         alarm_status = await self.async_get_alarm_status()
         return {"zones": zones, "alarm_status": alarm_status}
