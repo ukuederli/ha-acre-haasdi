@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from .data import AcreConfigEntry
 
 PLATFORMS: list[Platform] = [
+    Platform.SENSOR,
     Platform.BINARY_SENSOR,
     Platform.SWITCH,
 ]

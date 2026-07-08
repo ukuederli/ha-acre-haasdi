@@ -126,7 +126,69 @@ class AcreApiClient:
                 )
         return zones
 
+    async def async_get_alarm_status(self, retry: bool = True) -> dict[str, Any]:
+        """Get alarm arm/disarm status from the Acre panel."""
+        if not self._session_id:
+            await self.async_login()
+        url = f"http://{self._host}/secure.htm"
+        params = {
+            "session": self._session_id,
+            "page": "system_summary",
+        }
+        try:
+            async with self._session.get(url, params=params) as response:
+                if response.status != 200:
+                    raise AcreApiClientCommunicationError(
+                        f"Failed to get alarm status: status {response.status}"
+                    )
+                body = await response.text()
+                if ("login.htm" in body or "action=login" in body) and retry:
+                    self._session_id = None
+                    await self.async_login()
+                    return await self.async_get_alarm_status(retry=False)
+                return self._parse_alarm_status(body)
+        except aiohttp.ClientError as exception:
+            raise AcreApiClientCommunicationError(
+                f"Error fetching alarm status: {exception}"
+            ) from exception
+
+    def _parse_alarm_status(self, html: str) -> dict[str, Any]:
+        """Parse alarm status from system_summary HTML."""
+        soup = BeautifulSoup(html, "html.parser")
+
+        status = "unknown"
+        rows = soup.find_all("tr")
+        for row in rows:
+            cells = row.find_all("td")
+            for i, cell in enumerate(cells):
+                if "All Areas" in cell.get_text():
+                    for next_cell in cells[i + 1 :]:
+                        text = next_cell.get_text(strip=True)
+                        if text:
+                            status = text.lower()
+                            break
+                    break
+
+        active_mode = "unset"
+        inputs = soup.find_all("input", {"type": "submit"})
+        for inp in inputs:
+            if not inp.get("disabled"):
+                name = inp.get("name", "")
+                if "partset_a" in name:
+                    active_mode = "part_set_a"
+                elif "partset_b" in name:
+                    active_mode = "part_set_b"
+                elif "fullset" in name:
+                    active_mode = "fullset"
+
+        return {
+            "status": status,
+            "active_mode": active_mode,
+            "is_armed": status != "unset",
+        }
+
     async def async_get_data(self) -> dict[str, Any]:
         """Get all data from the Acre panel."""
         zones = await self.async_get_zones()
-        return {"zones": zones}
+        alarm_status = await self.async_get_alarm_status()
+        return {"zones": zones, "alarm_status": alarm_status}
