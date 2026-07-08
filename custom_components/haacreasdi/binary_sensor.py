@@ -1,4 +1,4 @@
-"""Binary sensor platform for integration_blueprint."""
+"""Binary sensor platform for haacreasdi."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 from homeassistant.components.binary_sensor import (
     BinarySensorDeviceClass,
     BinarySensorEntity,
-    BinarySensorEntityDescription,
 )
 
 from .entity import AcreEntity
@@ -15,47 +14,59 @@ from .entity import AcreEntity
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.entity_platform import AddEntitiesCallback
-
-    from .coordinator import BlueprintDataUpdateCoordinator
     from .data import AcreConfigEntry
-
-ENTITY_DESCRIPTIONS = (
-    BinarySensorEntityDescription(
-        key="integration_blueprint",
-        name="Integration Blueprint Binary Sensor",
-        device_class=BinarySensorDeviceClass.CONNECTIVITY,
-    ),
-)
 
 
 async def async_setup_entry(
-    hass: HomeAssistant,  # noqa: ARG001 Unused function argument: `hass`
+    hass: HomeAssistant,
     entry: AcreConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the binary_sensor platform."""
+    coordinator = entry.runtime_data.coordinator
+
+    # Warte bis Daten vorhanden
+    zones = coordinator.data.get("zones", []) if coordinator.data else []
+
     async_add_entities(
-        AcreBinarySensor(
-            coordinator=entry.runtime_data.coordinator,
-            entity_description=entity_description,
+        AcreZoneBinarySensor(
+            coordinator=coordinator,
+            zone=zone,
         )
-        for entity_description in ENTITY_DESCRIPTIONS
+        for zone in zones
     )
 
 
-class AcreBinarySensor(AcreEntity, BinarySensorEntity):
-    """integration_blueprint binary_sensor class."""
+class AcreZoneBinarySensor(AcreEntity, BinarySensorEntity):
+    """Binary sensor for an Acre alarm zone."""
 
-    def __init__(
-        self,
-        coordinator: BlueprintDataUpdateCoordinator,
-        entity_description: BinarySensorEntityDescription,
-    ) -> None:
-        """Initialize the binary_sensor class."""
+    _attr_device_class = BinarySensorDeviceClass.MOTION
+
+    def __init__(self, coordinator, zone: dict) -> None:
+        """Initialize the zone binary sensor."""
         super().__init__(coordinator)
-        self.entity_description = entity_description
+        self._zone_id = zone["id"]
+        self._attr_name = zone["name"]
+        self._attr_unique_id = f"acre_zone_{zone['id']}"
 
     @property
     def is_on(self) -> bool:
-        """Return true if the binary_sensor is on."""
-        return self.coordinator.data.get("title", "") == "foo"
+        """Return true if zone is triggered (Actuated)."""
+        zones = self.coordinator.data.get("zones", []) if self.coordinator.data else []
+        for zone in zones:
+            if zone["id"] == self._zone_id:
+                return zone["is_triggered"]
+        return False
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Return extra attributes."""
+        zones = self.coordinator.data.get("zones", []) if self.coordinator.data else []
+        for zone in zones:
+            if zone["id"] == self._zone_id:
+                return {
+                    "zone_type": zone["zone_type"],
+                    "area": zone["area"],
+                    "status": zone["status"],
+                }
+        return {}
