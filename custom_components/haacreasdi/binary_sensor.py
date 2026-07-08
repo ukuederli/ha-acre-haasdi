@@ -40,13 +40,13 @@ async def async_setup_entry(
 class AcreZoneBinarySensor(AcreEntity, BinarySensorEntity):
     """Binary sensor for an Acre alarm zone."""
 
-    _attr_device_class = BinarySensorDeviceClass.MOTION
+    _attr_device_class = BinarySensorDeviceClass.SAFETY
 
     def __init__(self, coordinator, zone: dict) -> None:
         """Initialize the zone binary sensor."""
         super().__init__(coordinator)
         self._zone_id = zone["id"]
-        self._attr_name = zone["name"]
+        self._attr_name = " ".join(zone["name"].split(" ")[1:])
         self._attr_unique_id = f"acre_zone_{zone['id']}"
 
     @property
