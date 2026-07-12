@@ -183,10 +183,56 @@ class AcreApiClient:
             "is_armed": status != "unset",
         }
 
+    async def async_get_system_log(self, retry: bool = True) -> list[str]:
+        """Get filtered system log from the Acre panel."""
+        url = f"http://{self._host}/secure.htm"
+        params = {
+            "session": self._session_id,
+            "page": "log",
+        }
+        try:
+            async with self._session.get(url, params=params) as response:
+                if response.status != 200:
+                    raise AcreApiClientCommunicationError(
+                        f"Failed to get log: status {response.status}"
+                    )
+                body = await response.text()
+                if ("login.htm" in body or "action=login" in body) and retry:
+                    self._session_id = None
+                    await self.async_login()
+                    return await self.async_get_system_log(retry=False)
+                return self._parse_system_log(body)
+        except aiohttp.ClientError as exception:
+            raise AcreApiClientCommunicationError(
+                f"Error fetching log: {exception}"
+            ) from exception
+
+    def _parse_system_log(self, html: str) -> list[str]:
+        """Parse and filter system log - exclude webapi login entries."""
+        soup = BeautifulSoup(html, "html.parser")
+        entries = []
+        rows = soup.find_all("td")
+        for row in rows:
+            text = row.get_text(strip=True)
+            if not text:
+                continue
+            if "WWW LOGIN OK, User 80 webapi" in text:
+                continue
+            if "WWW END, User 80 webapi" in text:
+                continue
+            if len(text) > 10 and text[2] == "/":
+                entries.append(text)
+        return entries
+
     async def async_get_data(self) -> dict[str, Any]:
         """Get all data from the Acre panel."""
         if not self._session_id:
             await self.async_login()
         zones = await self.async_get_zones()
         alarm_status = await self.async_get_alarm_status()
-        return {"zones": zones, "alarm_status": alarm_status}
+        system_log = await self.async_get_system_log()
+        return {
+            "zones": zones,
+            "alarm_status": alarm_status,
+            "system_log": system_log,
+        }
